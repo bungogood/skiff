@@ -56,11 +56,17 @@ The running Rockchip kernel has BPF syscalls and BPF JIT enabled, but:
 CONFIG_XDP_SOCKETS is not set
 ```
 
-AF_XDP therefore cannot run on this kernel. Enabling the config alone would
-only enable AF_XDP sockets. We must also establish whether the `st_gmac` driver
-supports native XDP and AF_XDP zero-copy. If it does not, AF_XDP falls back to
-copy mode through generic XDP; that is an interesting learning experiment, but
-not a replacement for the current busy-polled TCP latency profile.
+AF_XDP therefore cannot run on this kernel today. However, the installed 6.1
+kernel exports `stmmac_xdp_setup_pool`, the stmmac zero-copy XSK pool setup
+function. This is strong evidence that the driver-side implementation is linked
+into this Rockchip kernel and only the AF_XDP socket API is configured out.
+
+Upstream stmmac AF_XDP zero-copy support was published in a 2021 seven-patch
+series and is present in current Linux `stmmac_xdp.c`. The RK3588 uses the same
+stmmac/DWMAC driver family. This makes an AF_XDP zero-copy prototype feasible,
+but not guaranteed: it must be validated at runtime on the RK3588 MAC by
+forcing zero-copy mode. If bind fails in forced zero-copy mode, the platform
+cannot provide the path and must not be silently measured in copy mode.
 
 The DPDK AF_XDP PMD has the same prerequisite: `CONFIG_XDP_SOCKETS=y`, plus
 libbpf/libxdp. It does not bypass the need for driver support.
@@ -105,9 +111,11 @@ its acknowledgement semantics.
 1. Keep TCP plus busy polling as the latency baseline and record CPU use.
 2. Do not install DPDK merely to claim kernel bypass; it has no native PMD for
    the current NIC.
-3. If rebuilding the Rockchip kernel is desirable, enable `CONFIG_XDP_SOCKETS`
-   and probe `st_gmac` for native XDP and zero-copy support. Treat copy-mode
-   AF_XDP as a learning benchmark, not a performance commitment.
+3. Rebuild the Rockchip kernel on a sacrificial node with
+   `CONFIG_XDP_SOCKETS=y`, then force AF_XDP zero-copy against `end0`. Use the
+   upstream `xdpsock` test before building Skiff transport code. A forced
+   zero-copy bind is the go/no-go check; do not accept copy-mode fallback as a
+   kernel-bypass result.
 4. For a genuine DPDK experiment, attach a supported PCIe NIC and dedicate it
    to Skiff. This provides a maintained PMD, VFIO binding, queues, and a clean
    comparison against the onboard 1 Gb/s path.
@@ -120,3 +128,5 @@ its acknowledgement semantics.
 - [DPDK NIC driver list](https://doc.dpdk.org/guides/nics/index.html)
 - [DPDK AF_XDP PMD requirements](https://doc.dpdk.org/guides/nics/af_xdp.html)
 - [Linux AF_XDP documentation](https://docs.kernel.org/networking/af_xdp.html)
+- [stmmac AF_XDP zero-copy patch series](https://lwn.net/Articles/852357/)
+- [Upstream stmmac AF_XDP implementation](https://codebrowser.dev/linux/linux/drivers/net/ethernet/stmicro/stmmac/stmmac_xdp.c.html)
