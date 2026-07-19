@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <span>
 #include <string_view>
@@ -14,6 +15,8 @@
 #include <unistd.h>
 
 namespace {
+
+constexpr std::size_t max_batch_frames = 256;
 
 bool transfer_all(int socket_fd, std::span<std::byte> buffer, bool receive) {
   std::size_t transferred{};
@@ -95,15 +98,37 @@ int main(int argc, char* argv[]) {
       close(listener);
       return 1;
     }
-
-    std::array<std::byte, skiff::benchmark::request_size> request_bytes{};
-    while (transfer_all(client, request_bytes, true)) {
-      const auto request = skiff::benchmark::decode_request(request_bytes);
-      values[request.key] = request.value;
-      auto response = skiff::benchmark::encode_response(request.id);
-      if (!transfer_all(client, response, false)) {
+    std::array<std::byte, skiff::benchmark::request_size * max_batch_frames +
+                              skiff::benchmark::request_size - 1>
+        request_bytes{};
+    std::array<std::byte, skiff::benchmark::response_size * max_batch_frames> response_bytes{};
+    std::size_t buffered{};
+    for (;;) {
+      const auto received = recv(client, request_bytes.data() + buffered,
+                                 request_bytes.size() - buffered, 0);
+      if (received <= 0) {
         break;
       }
+      buffered += static_cast<std::size_t>(received);
+      const auto request_count = buffered / skiff::benchmark::request_size;
+      for (std::size_t index = 0; index < request_count; ++index) {
+        const auto offset = index * skiff::benchmark::request_size;
+        const auto request = skiff::benchmark::decode_request(
+            std::span<const std::byte, skiff::benchmark::request_size>{request_bytes.data() + offset,
+                                                                         skiff::benchmark::request_size});
+        values[request.key] = request.value;
+        skiff::benchmark::encode_response(
+            request.id, response_bytes.data() + index * skiff::benchmark::response_size);
+      }
+      if (!transfer_all(
+              client,
+              std::span{response_bytes}.first(request_count * skiff::benchmark::response_size), false)) {
+        break;
+      }
+
+      const auto consumed = request_count * skiff::benchmark::request_size;
+      buffered -= consumed;
+      std::memmove(request_bytes.data(), request_bytes.data() + consumed, buffered);
     }
     close(client);
   }

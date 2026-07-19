@@ -19,6 +19,8 @@
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr std::uint64_t max_pipeline = 65'536;
+constexpr std::size_t max_batch_frames = 256;
 
 bool transfer_all(int socket_fd, std::span<std::byte> buffer, bool receive) {
   std::size_t transferred{};
@@ -81,8 +83,9 @@ int main(int argc, char* argv[]) {
   std::uint64_t request_count{};
   std::uint64_t pipeline{64};
   if (!parse_unsigned(argv[3], request_count) ||
-      (argc == 5 && !parse_unsigned(argv[4], pipeline))) {
-    std::cerr << "REQUESTS and PIPELINE must be positive integers\n";
+      (argc == 5 && !parse_unsigned(argv[4], pipeline)) || pipeline > max_pipeline) {
+    std::cerr << "REQUESTS and PIPELINE must be positive integers; PIPELINE is at most "
+              << max_pipeline << '\n';
     return 2;
   }
 
@@ -96,40 +99,59 @@ int main(int argc, char* argv[]) {
   std::vector<Clock::time_point> sent_at(request_count);
   std::vector<double> latencies_us;
   latencies_us.reserve(request_count);
+  std::array<std::byte, skiff::benchmark::request_size * max_batch_frames> request_bytes{};
+  std::array<std::byte, skiff::benchmark::response_size * max_batch_frames +
+                            skiff::benchmark::response_size - 1>
+      response_bytes{};
   std::uint64_t sent{};
   std::uint64_t completed{};
+  std::size_t buffered_responses{};
   const auto start = Clock::now();
   while (completed < request_count) {
-    while (sent < request_count && sent - completed < pipeline) {
-      auto request = skiff::benchmark::encode_request({
-          .id = sent,
-          .key = sent % 1'000'000U,
-          .value = sent,
-      });
-      sent_at[sent] = Clock::now();
-      if (!transfer_all(socket_fd, request, false)) {
+    const auto batch_count = std::min<std::uint64_t>(
+        {request_count - sent, pipeline - (sent - completed), max_batch_frames});
+    for (std::uint64_t index = 0; index < batch_count; ++index) {
+      const auto request_id = sent + index;
+      skiff::benchmark::encode_request(
+          {.id = request_id, .key = request_id % 1'000'000U, .value = request_id},
+          request_bytes.data() + index * skiff::benchmark::request_size);
+      sent_at[request_id] = Clock::now();
+    }
+    if (batch_count > 0 &&
+        !transfer_all(socket_fd,
+                      std::span{request_bytes}.first(batch_count * skiff::benchmark::request_size), false)) {
         std::cerr << "write failed\n";
         close(socket_fd);
         return 1;
-      }
-      ++sent;
     }
+    sent += batch_count;
 
-    std::array<std::byte, skiff::benchmark::response_size> response{};
-    if (!transfer_all(socket_fd, response, true)) {
+    const auto received = recv(socket_fd, response_bytes.data() + buffered_responses,
+                               response_bytes.size() - buffered_responses, 0);
+    if (received <= 0) {
       std::cerr << "read failed\n";
       close(socket_fd);
       return 1;
     }
-    const auto response_id = skiff::benchmark::decode_response(response);
-    if (response_id != completed) {
-      std::cerr << "response order mismatch\n";
-      close(socket_fd);
-      return 1;
+    buffered_responses += static_cast<std::size_t>(received);
+    const auto response_count = buffered_responses / skiff::benchmark::response_size;
+    for (std::size_t index = 0; index < response_count; ++index) {
+      const auto offset = index * skiff::benchmark::response_size;
+      const auto response_id = skiff::benchmark::decode_response(
+          std::span<const std::byte, skiff::benchmark::response_size>{response_bytes.data() + offset,
+                                                                       skiff::benchmark::response_size});
+      if (response_id != completed) {
+        std::cerr << "response order mismatch\n";
+        close(socket_fd);
+        return 1;
+      }
+      const auto elapsed = Clock::now() - sent_at[response_id];
+      latencies_us.push_back(std::chrono::duration<double, std::micro>(elapsed).count());
+      ++completed;
     }
-    const auto elapsed = Clock::now() - sent_at[response_id];
-    latencies_us.push_back(std::chrono::duration<double, std::micro>(elapsed).count());
-    ++completed;
+    const auto consumed = response_count * skiff::benchmark::response_size;
+    buffered_responses -= consumed;
+    std::memmove(response_bytes.data(), response_bytes.data() + consumed, buffered_responses);
   }
   const auto duration = std::chrono::duration<double>(Clock::now() - start).count();
   close(socket_fd);

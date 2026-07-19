@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace skiff::benchmark {
 
@@ -30,15 +31,19 @@ inline void encode_u64(std::uint64_t value, std::byte* destination) {
   return value;
 }
 
+inline void encode_request(Request request, std::byte* destination) {
+  encode_u64(request.id, destination);
+  encode_u64(request.key, destination + sizeof(request.id));
+  encode_u64(request.value, destination + sizeof(request.id) + sizeof(request.key));
+}
+
 [[nodiscard]] inline std::array<std::byte, request_size> encode_request(Request request) {
   std::array<std::byte, request_size> bytes{};
-  encode_u64(request.id, bytes.data());
-  encode_u64(request.key, bytes.data() + sizeof(request.id));
-  encode_u64(request.value, bytes.data() + sizeof(request.id) + sizeof(request.key));
+  encode_request(request, bytes.data());
   return bytes;
 }
 
-[[nodiscard]] inline Request decode_request(const std::array<std::byte, request_size>& bytes) {
+[[nodiscard]] inline Request decode_request(std::span<const std::byte, request_size> bytes) {
   return {
       .id = decode_u64(bytes.data()),
       .key = decode_u64(bytes.data() + sizeof(std::uint64_t)),
@@ -46,14 +51,18 @@ inline void encode_u64(std::uint64_t value, std::byte* destination) {
   };
 }
 
+inline void encode_response(std::uint64_t id, std::byte* destination) {
+  encode_u64(id, destination);
+}
+
 [[nodiscard]] inline std::array<std::byte, response_size> encode_response(std::uint64_t id) {
   std::array<std::byte, response_size> bytes{};
-  encode_u64(id, bytes.data());
+  encode_response(id, bytes.data());
   return bytes;
 }
 
 [[nodiscard]] inline std::uint64_t decode_response(
-    const std::array<std::byte, response_size>& bytes) {
+    std::span<const std::byte, response_size> bytes) {
   return decode_u64(bytes.data());
 }
 
