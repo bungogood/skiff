@@ -1,0 +1,54 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "macos-apple-clang-debug",
+      "displayName": "macOS Apple Clang Debug",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/apple-clang-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "macos-llvm22-debug",
+      "displayName": "macOS Homebrew LLVM 22 Debug",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/llvm22-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "macos-llvm22-release",
+      "displayName": "macOS Homebrew LLVM 22 Release",
+      "inherits": "macos-llvm22-debug",
+      "binaryDir": "${sourceDir}/build/llvm22-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "macos-llvm22-debug",
+      "configurePreset": "macos-llvm22-debug"
+    },
+    {
+      "name": "macos-llvm22-release",
+      "configurePreset": "macos-llvm22-release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "macos-llvm22-debug",
+      "configurePreset": "macos-llvm22-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
