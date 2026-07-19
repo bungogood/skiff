@@ -66,8 +66,7 @@ bool parse_unsigned(std::string_view value, T& output) {
   return socket_fd;
 }
 
-[[nodiscard]] double percentile(std::vector<double> values, double percent) {
-  std::sort(values.begin(), values.end());
+[[nodiscard]] double percentile(const std::vector<double>& values, double percent) {
   const auto index = static_cast<std::size_t>(percent * static_cast<double>(values.size() - 1));
   return values[index];
 }
@@ -155,6 +154,7 @@ int main(int argc, char* argv[]) {
   }
   const auto duration = std::chrono::duration<double>(Clock::now() - start).count();
   close(socket_fd);
+  std::sort(latencies_us.begin(), latencies_us.end());
 
   std::cout << "mode=single_node_in_memory\n";
   std::cout << "requests=" << request_count << '\n';
@@ -164,4 +164,6 @@ int main(int argc, char* argv[]) {
   std::cout << "latency_us_p50=" << percentile(latencies_us, 0.50) << '\n';
   std::cout << "latency_us_p95=" << percentile(latencies_us, 0.95) << '\n';
   std::cout << "latency_us_p99=" << percentile(latencies_us, 0.99) << '\n';
+  std::cout << "latency_us_p999=" << percentile(latencies_us, 0.999) << '\n';
+  std::cout << "latency_us_max=" << latencies_us.back() << '\n';
 }

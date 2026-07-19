@@ -64,8 +64,10 @@ taskset -c 4 /tmp/skiff-bench/skiff_bench tpn1.local 19000 1000000 1024 >/dev/nu
 
 - `operations_per_second`: completed, acknowledged `PUT`s per second.
 - `p50`: half of operations completed faster than this latency.
-- `p95` and `p99`: tail latency; queueing, scheduling, and interrupt delay
-  appear here first.
+- `p95`, `p99`, and `p99.9`: tail latency; queueing, scheduling, and interrupt
+  delay appear here first.
+- `max`: the single slowest sample. Treat it as an outlier signal, not as a
+  stable latency target.
 - `pipeline`: maximum outstanding operations, not server parallelism.
 
 For a bounded pipeline, throughput is limited by the number of in-flight
@@ -165,6 +167,11 @@ after an experiment:
 sudo ethtool -C end0 rx-usecs 327 tx-usecs 1000 tx-frames 25
 ```
 
+For a pipeline-one latency sweep with CPU and IRQ affinity on A76 core 4, the
+50 us setting produced p50 262 us, p99 276 us, and p99.9 606 us. Zero
+coalescing was worse: p50 356 us and a 25 ms maximum. Interrupts still consume
+CPU, so the minimum setting is not necessarily the minimum latency.
+
 ## Offloads And Socket Settings
 
 The useful offloads are already enabled on both nodes:
@@ -181,6 +188,13 @@ it disabled useful coalescing and reduced peak throughput.
 The existing TCP socket buffers are sufficient for the measured RTT and batch
 sizes. Increase buffers only after a measurement shows a buffer limit; larger
 values are not a generic speed setting.
+
+The RK3588 kernel has `CONFIG_NET_RX_BUSY_POLL=y`, but `net.core.busy_read` and
+`net.core.busy_poll` are currently disabled. Busy polling is the next latency
+experiment: it can reduce interrupt wake-up delay by polling the NIC from a
+dedicated core, at the cost of continuously consuming that core. It needs an
+explicit opt-in socket configuration and a separate before/after measurement;
+do not enable it cluster-wide as a generic tuning value.
 
 ## Switch And Jumbo Frames
 
