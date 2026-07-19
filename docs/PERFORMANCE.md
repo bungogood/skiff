@@ -235,11 +235,11 @@ The cluster switch path is already much faster than Tailscale. The direct LAN
 test uses ordinary TCP over IPv4 and Ethernet, not TCP-over-UDP.
 
 Jumbo frames are the only likely switch-side optimization. The NICs advertise
-an MTU capability of 9000, but the switch, every participating interface, and
-the cluster network configuration must support the chosen MTU. Test this in an
-isolated maintenance window because changing MTU on these Kubernetes nodes can
-disrupt CNI traffic. Expect a modest improvement because Skiff already batches
-frames; do not expect a 2x gain.
+an MTU capability of 9000, but the tested board-switch path did not accept it:
+setting `tpn1` `end0` to MTU 9000 immediately dropped carrier. The interface
+was restored to MTU 1500 before restarting K3s, and no jumbo benchmark was
+run. Do not retry on this shared network until the board-switch configuration
+and supported port MTUs are known.
 
 To exceed the current wire-rate result materially, the cluster needs a faster
 than 1 Gb/s network path or larger logical client commands. UDP or QUIC do not
