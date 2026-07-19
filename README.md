@@ -58,3 +58,7 @@ report request count, elapsed time, operations/s, and end-to-end p50/p95/p99
 latency in microseconds. Begin with pipeline `1` for round-trip latency, then
 increase it to find the throughput limit. The emitted mode is
 `single_node_in_memory`; do not compare it as a durability or consensus result.
+
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) explains the benchmark transport,
+Turing Pi CPU/IRQ and coalescing profiles, measured hardware ceiling, and safe
+host-tuning workflow.
