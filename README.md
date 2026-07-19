@@ -44,13 +44,13 @@ is not the Raft node and has no persistence, replication, or crash recovery.
 Start it on the target node:
 
 ```sh
-./build/llvm22-debug/skiff_node --port 9000
+./build/llvm22-release/skiff_node --port 9000
 ```
 
 Run the load generator from another node:
 
 ```sh
-./build/llvm22-debug/skiff_bench TARGET_HOST 9000 1000000 64
+./build/llvm22-release/skiff_bench TARGET_HOST 9000 1000000 64
 ```
 
 The final argument is the maximum number of outstanding requests. Results
