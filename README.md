@@ -62,3 +62,7 @@ increase it to find the throughput limit. The emitted mode is
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) explains the benchmark transport,
 Turing Pi CPU/IRQ and coalescing profiles, measured hardware ceiling, and safe
 host-tuning workflow.
+
+[`docs/KERNEL_BYPASS.md`](docs/KERNEL_BYPASS.md) records the DPDK and AF_XDP
+feasibility research for the RK3588 onboard NIC and the recommended path to a
+real kernel-bypass experiment.
