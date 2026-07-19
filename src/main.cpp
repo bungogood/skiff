@@ -1,6 +1,7 @@
 #include "skiff/benchmark_protocol.hpp"
 
 #include <array>
+#include <charconv>
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -41,19 +42,53 @@ bool transfer_all(int socket_fd, std::span<std::byte> buffer, bool receive) {
   return static_cast<int>(port);
 }
 
+[[nodiscard]] unsigned int parse_busy_poll_us(std::string_view value) {
+  unsigned int duration{};
+  const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), duration);
+  if (error != std::errc{} || end != value.data() + value.size() || duration == 0) {
+    return 0;
+  }
+  return duration;
+}
+
+bool configure_busy_poll(int socket_fd, unsigned int duration_us) {
+  if (duration_us == 0) {
+    return true;
+  }
+#ifdef SO_BUSY_POLL
+  return setsockopt(socket_fd, SOL_SOCKET, SO_BUSY_POLL, &duration_us, sizeof(duration_us)) == 0;
+#else
+  static_cast<void>(socket_fd);
+  errno = ENOTSUP;
+  return false;
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
   constexpr int default_port = 9000;
   int port = default_port;
-  if (argc == 3 && std::string_view{argv[1]} == "--port") {
-    port = parse_port(argv[2]);
-  } else if (argc != 1) {
-    std::cerr << "usage: skiff_node [--port PORT]\n";
-    return 2;
+  unsigned int busy_poll_us{};
+  bool invalid_busy_poll_value{};
+  for (int index = 1; index < argc; index += 2) {
+    if (index + 1 == argc) {
+      std::cerr << "usage: skiff_node [--port PORT] [--busy-poll-us USEC]\n";
+      return 2;
+    }
+    const std::string_view option{argv[index]};
+    if (option == "--port") {
+      port = parse_port(argv[index + 1]);
+    } else if (option == "--busy-poll-us") {
+      busy_poll_us = parse_busy_poll_us(argv[index + 1]);
+      invalid_busy_poll_value = busy_poll_us == 0;
+    } else {
+      std::cerr << "usage: skiff_node [--port PORT] [--busy-poll-us USEC]\n";
+      return 2;
+    }
   }
-  if (port == 0) {
-    std::cerr << "invalid port\n";
+  if (port == 0 || invalid_busy_poll_value) {
+    std::cerr << "invalid option value\n";
     return 2;
   }
 
@@ -97,6 +132,11 @@ int main(int argc, char* argv[]) {
       std::perror("accept");
       close(listener);
       return 1;
+    }
+    if (!configure_busy_poll(client, busy_poll_us)) {
+      std::perror("setsockopt SO_BUSY_POLL");
+      close(client);
+      continue;
     }
     std::array<std::byte, skiff::benchmark::request_size * max_batch_frames +
                               skiff::benchmark::request_size - 1>

@@ -6,6 +6,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -34,6 +35,19 @@ bool transfer_all(int socket_fd, std::span<std::byte> buffer, bool receive) {
     transferred += static_cast<std::size_t>(result);
   }
   return true;
+}
+
+bool configure_busy_poll(int socket_fd, unsigned int duration_us) {
+  if (duration_us == 0) {
+    return true;
+  }
+#ifdef SO_BUSY_POLL
+  return setsockopt(socket_fd, SOL_SOCKET, SO_BUSY_POLL, &duration_us, sizeof(duration_us)) == 0;
+#else
+  static_cast<void>(socket_fd);
+  errno = ENOTSUP;
+  return false;
+#endif
 }
 
 template <typename T>
@@ -74,15 +88,27 @@ bool parse_unsigned(std::string_view value, T& output) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-  if (argc != 4 && argc != 5) {
-    std::cerr << "usage: skiff_bench HOST PORT REQUESTS [PIPELINE]\n";
+  if (argc < 4) {
+    std::cerr << "usage: skiff_bench HOST PORT REQUESTS [PIPELINE] [--busy-poll-us USEC]\n";
     return 2;
   }
 
   std::uint64_t request_count{};
   std::uint64_t pipeline{64};
-  if (!parse_unsigned(argv[3], request_count) ||
-      (argc == 5 && !parse_unsigned(argv[4], pipeline)) || pipeline > max_pipeline) {
+  unsigned int busy_poll_us{};
+  int option_index = 4;
+  if (option_index < argc && std::string_view{argv[option_index]} != "--busy-poll-us") {
+    if (!parse_unsigned(argv[option_index], pipeline)) {
+      std::cerr << "REQUESTS and PIPELINE must be positive integers; PIPELINE is at most "
+                << max_pipeline << '\n';
+      return 2;
+    }
+    ++option_index;
+  }
+  if (!parse_unsigned(argv[3], request_count) || pipeline > max_pipeline ||
+      (option_index < argc && (option_index + 2 != argc ||
+                               std::string_view{argv[option_index]} != "--busy-poll-us" ||
+                               !parse_unsigned(argv[option_index + 1], busy_poll_us)))) {
     std::cerr << "REQUESTS and PIPELINE must be positive integers; PIPELINE is at most "
               << max_pipeline << '\n';
     return 2;
@@ -92,6 +118,11 @@ int main(int argc, char* argv[]) {
   const int socket_fd = connect_to(argv[1], argv[2]);
   if (socket_fd < 0) {
     std::cerr << "unable to connect to " << argv[1] << ':' << argv[2] << '\n';
+    return 1;
+  }
+  if (!configure_busy_poll(socket_fd, busy_poll_us)) {
+    std::perror("setsockopt SO_BUSY_POLL");
+    close(socket_fd);
     return 1;
   }
 
@@ -159,6 +190,7 @@ int main(int argc, char* argv[]) {
   std::cout << "mode=single_node_in_memory\n";
   std::cout << "requests=" << request_count << '\n';
   std::cout << "pipeline=" << pipeline << '\n';
+  std::cout << "busy_poll_us=" << busy_poll_us << '\n';
   std::cout << "duration_seconds=" << duration << '\n';
   std::cout << "operations_per_second=" << static_cast<double>(request_count) / duration << '\n';
   std::cout << "latency_us_p50=" << percentile(latencies_us, 0.50) << '\n';

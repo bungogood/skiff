@@ -132,6 +132,11 @@ sudo sh -c 'echo 0-7 > /proc/irq/IRQ_NUMBER/smp_affinity_list'
 This is a host-wide networking setting. Do not leave it pinned on a shared
 Kubernetes node without deciding which workloads own that core and NIC queue.
 
+CPU 4 was the first tested A76 core, not a guaranteed best core. A 5,000-write
+pipeline-one sweep found CPU 6 had the best stable p99.9 at 297 us. Repeat this
+sweep after major workload or thermal changes; core choice is a measurement,
+not a hardware rule.
+
 ## Interrupt Coalescing Profiles
 
 Coalescing waits briefly before raising an interrupt, reducing interrupt rate
@@ -189,12 +194,40 @@ The existing TCP socket buffers are sufficient for the measured RTT and batch
 sizes. Increase buffers only after a measurement shows a buffer limit; larger
 values are not a generic speed setting.
 
-The RK3588 kernel has `CONFIG_NET_RX_BUSY_POLL=y`, but `net.core.busy_read` and
-`net.core.busy_poll` are currently disabled. Busy polling is the next latency
-experiment: it can reduce interrupt wake-up delay by polling the NIC from a
-dedicated core, at the cost of continuously consuming that core. It needs an
-explicit opt-in socket configuration and a separate before/after measurement;
-do not enable it cluster-wide as a generic tuning value.
+## Busy Polling
+
+The RK3588 kernel has `CONFIG_NET_RX_BUSY_POLL=y`. Busy polling replaces part
+of the interrupt wake-up path with a short NIC polling budget. It can lower
+latency substantially, but it consumes a dedicated CPU while traffic is idle.
+It is therefore an opt-in benchmark profile, not a cluster-wide default.
+
+For an isolated experiment, stop K3s on the primary and load node, choose the
+measured A76 core, and align the NIC IRQ before enabling the budget:
+
+```sh
+sudo systemctl stop k3s                 # tpn1
+sudo systemctl stop k3s-agent           # tpn4
+sudo sysctl -w net.core.busy_read=50 net.core.busy_poll=50
+```
+
+Start both endpoints with an explicit socket budget:
+
+```sh
+taskset -c 6 /tmp/skiff-bench/skiff_node --port 19000 --busy-poll-us 50
+taskset -c 6 /tmp/skiff-bench/skiff_bench tpn1.local 19000 20000 1 --busy-poll-us 50
+```
+
+With CPU 6, matching NIC IRQs, 50 us coalescing, and K3s paused, normal
+interrupts measured p50 258 us, p99 269 us, and p99.9 333 us. The 50 us
+busy-poll profile measured p50 54 us, p99 61 us, and p99.9 107 us.
+
+Restore the hosts immediately after the experiment:
+
+```sh
+sudo sysctl -w net.core.busy_read=0 net.core.busy_poll=0
+sudo systemctl start k3s                 # tpn1
+sudo systemctl start k3s-agent           # tpn4
+```
 
 ## Switch And Jumbo Frames
 
